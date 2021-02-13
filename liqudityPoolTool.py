@@ -50,8 +50,8 @@ def updatePrices(dataDict, verbose=True):
     '''
     Assumes nested dict of asset pairings of asset prices.
     Updates token prices by calling getTokenPrice() and returns updated version.
-    Keys needed in input dict:
-        ['colStr', 'assStr', 'priceCol', 'priceAss']
+    Keys and types needed in input dict:
+        ['colStr': str, 'assStr': str, 'priceCol': float, 'priceAss': float]
     '''
     # Temp storage to prevent unnecessary scraping
     alreadyScraped = {}
