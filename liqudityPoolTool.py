@@ -20,15 +20,15 @@ def getTokenPrice(tokenStr):
     req = urllib.request.Request(url, headers= {'User-Agent' : userAgent})
     html = urllib.request.urlopen(req)
     bs = BeautifulSoup(html.read(), 'html.parser')
-    
+
     # Scrape price data
-    varList = bs.findAll('span', {'class': 'no-wrap'})  
+    varList = bs.findAll('span', {'class': 'no-wrap'})
     priceStr = varList[0].get_text()
     priceUSD = float(priceStr.replace(',','').replace('$',''))
-    
+
     # Sleep max 2 seconds before function can be called again
     sleep(random.random()*2)
-    
+
     return priceUSD
 
 
@@ -42,7 +42,7 @@ def balanceAssets(asset1Amount, asset1Price, asset2Amount, asset2Price):
     meanVal = sqrt(asset1Amount * asset1Price + asset2Amount * asset2Price)**2
     currentAsset1 = 0.5 * meanVal / asset1Price
     currentAsset2 = 0.5 * meanVal / asset2Price
-    
+
     return currentAsset1, currentAsset2
 
 
@@ -50,10 +50,12 @@ def updatePrices(dataDict, verbose=True):
     '''
     Assumes nested dict of asset pairings of asset prices.
     Updates token prices by calling getTokenPrice() and returns updated version.
+    Keys needed in input dict:
+        ['colStr', 'assStr', 'priceCol', 'priceAss']
     '''
     # Temp storage to prevent unnecessary scraping
     alreadyScraped = {}
-    
+
     # Cycle through token pairings as given in input dict
     for pairKey in dataDict.keys():
         try:
@@ -61,7 +63,8 @@ def updatePrices(dataDict, verbose=True):
         except KeyError:
             print('''
             %s is not in the data dict yet.
-            You need to add "colStr" and "assStr" values for %s first.''' % (pairKey, pairKey))
+            You need to add "colStr" and "assStr" values for %s first.
+            ''' % (pairKey, pairKey))
 
         # Update collateral & asset per token pairing
         updateMap = {'colStr': 'priceCol', 'assStr': 'priceAss'}
@@ -77,7 +80,7 @@ def updatePrices(dataDict, verbose=True):
                     print('Successfully scraped current data for %s from Coingecko.' % tokenStr)
     if verbose:
         print('')
-                    
+
     return dataDict
 
 
@@ -102,10 +105,5 @@ def getPoolStatus(data, roundTo=2):
             'amtCol': round(amtColNow, roundTo),
             'amtAss': round(amtAssNow, roundTo)
         }
-        
+
     return poolData
-
-
-
-
-
