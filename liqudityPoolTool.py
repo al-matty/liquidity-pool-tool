@@ -32,7 +32,7 @@ def getTokenPrice(tokenStr):
     return priceUSD
 
 
-def balanceAssets(asset1Amount, asset1Price, asset2Amount, asset2Price):
+def balanceAssets(asset1Amount, asset1Price, asset2Amount, asset2Price, roundTo=None):
     '''
     Assumes token amounts at pool entry and their current usd values.
     Returns estimated current amounts based on current asset prices,
@@ -43,15 +43,16 @@ def balanceAssets(asset1Amount, asset1Price, asset2Amount, asset2Price):
     currentAsset1 = 0.5 * meanVal / asset1Price
     currentAsset2 = 0.5 * meanVal / asset2Price
 
-    return currentAsset1, currentAsset2
+    if roundTo:
+        return round(currentAsset1, roundTo), round(currentAsset2, roundTo)
+    else:
+        return currentAsset1, currentAsset2
 
 
 def updatePrices(dataDict, verbose=True):
     '''
     Assumes nested dict of asset pairings of asset prices.
     Updates token prices by calling getTokenPrice() and returns updated version.
-    Keys and types needed in input dict:
-        ['colStr': str, 'assStr': str, 'priceCol': float, 'priceAss': float]
     '''
     # Temp storage to prevent unnecessary scraping
     alreadyScraped = {}
@@ -63,8 +64,7 @@ def updatePrices(dataDict, verbose=True):
         except KeyError:
             print('''
             %s is not in the data dict yet.
-            You need to add "colStr" and "assStr" values for %s first.
-            ''' % (pairKey, pairKey))
+            You need to add "colStr" and "assStr" values for %s first.''' % (pairKey, pairKey))
 
         # Update collateral & asset per token pairing
         updateMap = {'colStr': 'priceCol', 'assStr': 'priceAss'}
@@ -77,7 +77,7 @@ def updatePrices(dataDict, verbose=True):
                 dataDict[pairKey][valKey] = price
                 alreadyScraped[tokenStr] = price
                 if verbose:
-                    print('Successfully scraped current data for %s from Coingecko.' % tokenStr)
+                    print('Successfully scraped price data for %s from Coingecko.' % tokenStr)
     if verbose:
         print('')
 
