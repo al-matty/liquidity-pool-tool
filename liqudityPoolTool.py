@@ -1,6 +1,6 @@
+# Helper Functions 
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-
 
 import os, inspect, sys
 from math import sqrt
@@ -88,51 +88,6 @@ def balanceAssets(asset1Amount, asset1Price, asset2Amount, asset2Price, roundTo=
         return round(currentAsset1, roundTo), round(currentAsset2, roundTo)
     else:
         return currentAsset1, currentAsset2
-
-# Takes pairs dict and updates it inplace. Calls getTokenPrice(), getTokenMc()
-# TODO: Should call getTokenMetrics per token instead.
-def updatePrices(dataDict, verbose=True):
-    '''
-    Assumes nested dict of asset pairings of asset prices.
-    Updates token prices by calling getTokenPrice() and returns updated version.
-    '''
-    # Temp storage to prevent unnecessary scraping
-    alreadyScraped = {}
-    
-    # Cycle through token pairings as given in input dict
-    for pairKey in dataDict.keys():
-        try:
-            strKeys = ['colStr', 'assStr']
-        except KeyError:
-            print('''
-            %s is not in the data dict yet.
-            You need to add "colStr" and "assStr" values for %s first.''' % (pairKey, pairKey))
-
-        # Update collateral & asset per token pairing
-        updateMap = {'colStr': 'priceCol', 'assStr': 'priceAss'}
-        for nameKey, valKey in updateMap.items():
-            tokenStr = dataDict[pairKey][nameKey]
-            if tokenStr in alreadyScraped:
-                dataDict[pairKey][valKey] = alreadyScraped[tokenStr]
-            else:
-                tokenData = getTokenMetrics(tokenStr)
-
-#                price = getTokenPrice(tokenStr)
-#                mc = getTokenMc()
-                
-                price = tokenData('price')
-                mc = tokenData('mc')
-                rank = tokenData('rank')
-                
-                dataDict[pairKey][valKey] = price
-                alreadyScraped[tokenStr] = price
-                
-                if verbose:
-                    print('Successfully scraped price data for %s from Coingecko.' % tokenStr)
-    if verbose:
-        print('')
-                    
-    return dataDict
 
 def getPoolVal(asset1Amount, asset1Price, asset2Amount, asset2Price, roundTo=None):
     '''
@@ -254,11 +209,16 @@ def getTokenMetrics(tokenStr):
     # Extract metrics that need html tag key attribute or other special treatment
     try:
         manuallyScraped = ['priceBTC', 'mcBTC']
-        tokenDict['priceBTC'] = float(noWrapTags[0].get('data-price-btc'))
-        tokenDict['mcBTC'] = float(noWrapTags[1].get('data-price-btc'))
-        tokenDict['circSupply'] = float(mt1Tags[6].get_text().split('/')[0].strip().replace(',',''))
-        tokenDict['totalSupply'] = float(mt1Tags[6].get_text().split('/')[1].strip().replace(',',''))
-        tokenDict['mcRank'] = findCell(tableRows, 'Rank', stripToInt=True)      
+        priceBTC = float(noWrapTags[0].get('data-price-btc'))
+        mcBTC = float(noWrapTags[1].get('data-price-btc'))
+        circSupply = float(mt1Tags[6].get_text().split('/')[0].strip().replace(',',''))
+        mcRank = findCell(tableRows, 'Rank', stripToInt=True)
+
+        # If supply is infinite (as in ETH), replace with inf
+        try:
+            totalSupply = float(mt1Tags[6].get_text().split('/')[1].strip().replace(',',''))
+        except ValueError:
+            totalSupply = np.inf
         
     # Possibility: str-to-float conversion failed because it got None as argument 
     except TypeError:
@@ -269,22 +229,55 @@ def getTokenMetrics(tokenStr):
             Check {funcName}().
             """)
     
-    # Extract all other metrics from text
+    # Extract all other metrics from text and add all to the dict
     tokenDict['priceUSD'] = clean(noWrapTags[0].get_text())
+    tokenDict['priceBTC'] = priceBTC
+    tokenDict['mcRank'] = mcRank
     tokenDict['mcUSD'] = clean(noWrapTags[1].get_text())
+    tokenDict['mcBTC'] = mcBTC
+    tokenDict['circSupply'] = circSupply
+    tokenDict['totalSupply'] = totalSupply
     tokenDict['24hVol'] = clean(noWrapTags[2].get_text())
     tokenDict['24hLow'] = clean(noWrapTags[3].get_text())
     tokenDict['24hHigh'] = clean(noWrapTags[4].get_text())
     tokenDict['7dLow'] = clean(noWrapTags[10].get_text())
     tokenDict['7dHigh'] = clean(noWrapTags[11].get_text())
     tokenDict['ATH'] = clean(noWrapTags[12].get_text())
-    tokenDict['ATL'] = clean(noWrapTags[12].get_text())
-    tokenDict['symbol'] = noWrapTags[0].get('data-coin-symbol')    
+    tokenDict['ATL'] = clean(noWrapTags[13].get_text())
+    tokenDict['symbol'] = noWrapTags[0].get('data-coin-symbol')
     
     # Sleep max 2 seconds before function can be called again (= scrape in a nice way)
     sleep(random.random()*2)
     
     return tokenDict
+
+# Iterates over pairs in dataDict, calls getTokenMetrics for each asset and returns a dict metrics per token
+def createMetricsDict(dataDict, verbose=True):
+    '''
+    Assumes nested dict of asset pairings containing 'colStr' and 'assStr' respectively.
+    Scrapes current data from coingecko for each asset of each pair.
+    Returns a dict of scraped metrics per token.
+    '''
+    tokenData = {}
+    
+    # Cycle through token pairings as given in input dict
+    for pair in dataDict.keys():
+
+        # Get names of each token from pair
+        tokens = (dataDict[pair]['colStr'], dataDict[pair]['assStr'])
+        
+        # If already scraped: Don't scrape again.
+        for tokenStr in tokens:
+            if tokenStr not in tokenData.keys():
+
+                # Scrape token data from coingecko and store in dict
+                tokenDict = getTokenMetrics(tokenStr)
+                tokenData[tokenStr] = tokenDict
+    
+                if verbose:
+                    print('Successfully scraped price data for %s from Coingecko.' % tokenStr)
+                    
+    return tokenData
 
 # Appends a new row to csv as specified in fileName
 def appendToCsv(fileName, varList, varNames, verbose=True):
@@ -300,7 +293,7 @@ def appendToCsv(fileName, varList, varNames, verbose=True):
     2nd value: The current time in format "2021 Feb 18 17:34"
     If there is no file yet: Creates file with header = id, timestamp, [varNames]
     '''
-
+    
     # Get name of function for error messages (depends on inspect, sys)
     funcName = inspect.currentframe().f_code.co_name
     
@@ -308,17 +301,8 @@ def appendToCsv(fileName, varList, varNames, verbose=True):
     assert len(varList) == len(varNames), \
         f"{funcName}(): The number of variables and names to append to csv must be the same."
     
-    # Abort if number of variables to append differs from number of elements in csv header.
-    with open(fileName, 'r') as infile:
-        header = infile.readlines()[0]
-        n_header = len(header.split(','))
-    assert len(varList) == n_header, \
-        f"""
-        {funcName}(): You're trying to append a row of {len(varList)} variables to csv.
-        In the csv header there are only {n_header}. To be imported as pandas dataframe for analytics,
-        the number of variables per row in the csv needs to stay consistent throughout all rows.
-        """
-
+    rowsAdded = []
+    
     # Get current time.
     timestamp = datetime.now()
     parsedTime = timestamp.strftime('%Y %b %d %H:%M')
@@ -326,20 +310,38 @@ def appendToCsv(fileName, varList, varNames, verbose=True):
     # Possibility: fileName doesn't exist yet. Create file with header and data.
     if not os.path.isfile(fileName):
         header = 'id,' + 'time,' + str(','.join(varNames))
+        
         with open(fileName, 'a') as wfile:
             wfile.write(header)
             varList = [str(var) for var in varList]
             row = '\n' + '0' + ',' + parsedTime + ',' + str(','.join(varList))
             wfile.write(row)
+            rowsAdded.append(row)
+            
         if verbose:
-            print('''
+            print(
+            '''
             No file called "%s" has been found, so it has been created.
-            Header: %s
+            Header:
+            %s
             ''' % (fileName, header))
             print('Added new row to data: \t', row[1:]) 
 
     # Possibility: fileName exists. Only append new data.
     else:
+        
+        # Abort if number of variables to append differs from number of elements in csv header.
+        with open(fileName, 'r') as infile:
+            header = infile.readlines()[0]
+            n_header = len(header.split(','))
+            
+        assert len(varList) + 2 == n_header, \
+            f"""
+            {funcName}(): You're trying to append a row of {len(varList)} variables to csv.
+            In the csv header there are {n_header}. To be imported as pandas dataframe for analytics,
+            the number of variables per row in the csv needs to stay consistent throughout all rows.
+            """
+        
         # Determine new id value based on most recent line of file.
         with open(fileName, 'r') as rfile:
             rows = rfile.readlines()
@@ -350,6 +352,8 @@ def appendToCsv(fileName, varList, varNames, verbose=True):
                     varList = [str(var) for var in varList]
                     row = '\n' + str(id_) + ',' + parsedTime + ',' + str(','.join(varList))
                     wfile.write(row)
+                    rowsAdded.append(row)
+                    
                     if verbose:
                         print('Added new row to data: \t', row[1:]) 
 
@@ -361,36 +365,47 @@ def appendToCsv(fileName, varList, varNames, verbose=True):
                 No data has been written to the file.''' % fileName)
 
 # Calls appendToCsv(). Values in dataDict per pair become veriables per row in csv
-def updateCSV(dataDict, fileName, verbose=True):
+def updateCSV(d, fileName, order=None, verbose=True):
     '''
     Appends current pool data from nested dict to csv file to keep track of
     asset ratios over time.
+    Order can be specified as list of variable names.
     '''
-    outDf = pd.DataFrame(dataDict)
+    outDf = pd.DataFrame(d)
 
+    # Order data
+    if order:
+        outDf = outDf.reindex(order)
+        
+    # Count rows before appending data
+    if os.path.isfile(fileName):
+        with open(fileName, 'r') as file:
+            rowsBefore = len(file.readlines())
+    else:
+        rowsBefore = 0
+    
+    # Append data
     for pair in outDf:
         name = pair
         varNames = outDf[pair].index.tolist()
-        varNames.insert(0, 'pair')
+        varNames.insert(0, 'token')
         varList = outDf[pair].values.tolist()
         varList.insert(0, name)
         appendToCsv(fileName, varList, varNames, verbose=verbose)
-
-
         
+    # Count rows after appending, prepare labeled sample row for printing
+    with open(fileName, 'r') as file:
+        lines = file.readlines()
+        rowsAfter = len(lines)
+        difference = rowsAfter - rowsBefore
+        headerList = lines[0].strip().split(',')
+        sampleRow = random.choice(lines[-difference:])
+        sampleList = sampleRow.strip().split(',')
         
-def updateBounds(data):
-    boundsDict = data.copy()
+    printDf = pd.DataFrame(sampleList, index=headerList, columns=['Sample Row'])
+    
+    print(f'Appended {difference} rows to {fileName}. Random sample:\n')
+    print(printDf)
 
-def withinBounds(tokenStr):
-    '''
-    Returns True if token is within bounds as given in data dict.
-    '''
-    # loads historical min and max values per metric per token 
-    price = 0
-    lowerBound = 0
-    upperBound = 0
-    if price >= lowerBound <= upperBound:
-        return True
-
+    
 
