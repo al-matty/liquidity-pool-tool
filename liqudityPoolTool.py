@@ -1,4 +1,3 @@
-# Helper Functions 
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
@@ -12,19 +11,6 @@ from bs4 import BeautifulSoup
 from datetime import datetime
 import matplotlib.pyplot as plt
 
-
-def plot_line(df, col_x, col_y):
-    '''
-    Quick labeled line plot of one dfCol vs. another.
-    Assumes col_x and col_y column labels (str) of df.
-    '''
-    assert type(col_x) == str and type(col_y) == str, 'col_x and col_y must be strings, ya dummy...'
-    plotDf = df.sort_values(by=col_x, inplace=False)
-    plt.plot(plotDf[col_x].values, plotDf[col_y].values)
-    plt.xlabel(col_x)
-    plt.ylabel(col_y)
-    plt.title('Line Plot of %s and %s' % (col_y, col_x))
-    plt.show()
 
 # Scrapes and returns price of 1 asset from coingecko
 def getTokenPrice(tokenStr):
@@ -71,6 +57,21 @@ def getTokenMc(tokenStr):
     sleep(random.random()*2)
     
     return priceUSD
+
+
+
+def plot_line(df, col_x, col_y):
+    '''
+    Quick labeled line plot of one dfCol vs. another.
+    Assumes col_x and col_y column labels (str) of df.
+    '''
+    assert type(col_x) == str and type(col_y) == str, 'col_x and col_y must be strings, ya dummy...'
+    plotDf = df.sort_values(by=col_x, inplace=False)
+    plt.plot(plotDf[col_x].values, plotDf[col_y].values)
+    plt.xlabel(col_x)
+    plt.ylabel(col_y)
+    plt.title('Line Plot of %s and %s' % (col_y, col_x))
+    plt.show()
 
 # Returns 1 tuple of current pool allocation given initial asset amounts and current prices
 def balanceAssets(asset1Amount, asset1Price, asset2Amount, asset2Price, roundTo=None):
@@ -126,8 +127,19 @@ def getPoolStatus(data, roundTo=2):
         
     return poolData
 
+
+# Helper function: Removes any '$', '%', and ',' from target string and converts to float
+def clean(string):
+    # Abort if scraped metric is empty or None
+    assert string not in {None, ''}, \
+        f"""
+        Coingecko seems to have restructured their website.
+        One of the metrics couldn't be scraped. Check {funcName}().
+        """
+    return float(string.replace(',','').replace('$','').replace('%',''))
+
 # Cycles through all table rows of a website and returns [integer from] first [matching] row/cell
-def findCell(tableRows, rowKw, cellKw=None, stripToInt=True):
+def findCell(tableRows, rowKw, cellKw=None, getRawRow=False, stripToInt=True):
     '''
     Assumes tableRows = bs.findAll('tr').
     Cycles through all table rows / cells of a website and returns a match
@@ -149,6 +161,11 @@ def findCell(tableRows, rowKw, cellKw=None, stripToInt=True):
         if rowKw in row.get_text():
             result = str(row)
             
+            # Possibility getRaw: Return raw bs.Tag object
+            if getRawRow and result and not cellKw:
+                result = row
+                stripToInt = False
+            
     # Possibility cellKw: Return the first cell containing cellKw
     if cellKw and result:
         sCell = [str(cell) for cell in row if cellKw in result][0]
@@ -166,14 +183,14 @@ def findCell(tableRows, rowKw, cellKw=None, stripToInt=True):
             There are no digits in the first row containing '{rowKw}' and
             its first cell containing '{cellKw}'.
             ''')
-
+    
     # Possibility: No rows found matching rowKw
     if not result:
         print(f'{funcName}(): No rows found containing {rowKw}!')
     return result    
 
 # Scrapes coingecko and returns dict of various token metrics for 1 asset (calls findCell() for mc rank)
-def getTokenMetrics(tokenStr):
+def getTokenMetrics(tokenStr, logfile=None, waitAfter=3):
     '''
     Assumes a string matching an existing html child of 'coingecko.com/en/coins/', i.e. 'ethereum'.
     Returns a dict of current asset metrics as given on coingecko.com.
@@ -191,17 +208,7 @@ def getTokenMetrics(tokenStr):
     html = urllib.request.urlopen(req)
     bs = BeautifulSoup(html.read(), 'html.parser')
     
-    # Helper function: Removes any '$' and ',' from target string and converts to float
-    def clean(string):
-        # Abort if scraped metric is empty or None
-        assert string not in {None, ''}, \
-            f"""
-            Coingecko seems to have restructured their website.
-            One of the metrics couldn't be scraped. Check {funcName}().
-            """
-        return float(string.replace(',','').replace('$',''))
-    
-    # Load needed html tag result sets
+    # Load necessary html tag result sets
     noWrapTags = bs.findAll('span', {'class': 'no-wrap'})  # list of html tags
     mt1Tags = bs.findAll('div', {'class': 'mt-1'}) 
     tableRows = bs.findAll('tr')
@@ -246,13 +253,23 @@ def getTokenMetrics(tokenStr):
     tokenDict['ATL'] = clean(noWrapTags[13].get_text())
     tokenDict['symbol'] = noWrapTags[0].get('data-coin-symbol')
     
-    # Sleep max 2 seconds before function can be called again (= scrape in a nice way)
-    sleep(random.random()*2)
+    # Option: Write to logFile if any scraped metric except 'symbol' is not a number
+    if logfile:
+        allowedTypes = {int, float}
+        filtered = {key: value for (key, value) in tokenDict.items() if key != 'symbol'}
+        
+        for key, metric in filtered.items():
+            if type(metric) not in allowedTypes:
+                message = f"Check {funcName}(): Scraped value for '{tokenStr}': '{key}' is '{metric}', which is not a number."
+                log(logfile, message)
+    
+    # Wait for max {waitAfter} seconds before function can be called again (= scrape in a nice way)
+    sleep(random.random() * waitAfter)
     
     return tokenDict
 
 # Iterates over pairs in dataDict, calls getTokenMetrics for each asset and returns a dict metrics per token
-def createMetricsDict(dataDict, verbose=True):
+def createMetricsDict(dataDict, verbose=True, logfile=None):
     '''
     Assumes nested dict of asset pairings containing 'colStr' and 'assStr' respectively.
     Scrapes current data from coingecko for each asset of each pair.
@@ -271,7 +288,7 @@ def createMetricsDict(dataDict, verbose=True):
             if tokenStr not in tokenData.keys():
 
                 # Scrape token data from coingecko and store in dict
-                tokenDict = getTokenMetrics(tokenStr)
+                tokenDict = getTokenMetrics(tokenStr, logfile=logfile)
                 tokenData[tokenStr] = tokenDict
     
                 if verbose:
@@ -364,16 +381,17 @@ def appendToCsv(fileName, varList, varNames, verbose=True):
                 Something is wrong with your data file.
                 No data has been written to the file.''' % fileName)
 
-# Calls appendToCsv(). Values in dataDict per pair become veriables per row in csv
-def updateCSV(d, fileName, order=None, verbose=True):
+# Calls appendToCsv(). Values in d (nested dict) per pool/token become veriables per row in csv
+def updateCSV(d, fileName, order=None, verbose=True, logfile=None):
     '''
     Appends current pool data from nested dict to csv file to keep track of
     asset ratios over time.
     Order can be specified as list of variable names.
+    logfile: If a textfile is specified, appends datetime & #rows to logfile.
     '''
     outDf = pd.DataFrame(d)
 
-    # Order data
+    # Possibility: Reorder data as specified in order
     if order:
         outDf = outDf.reindex(order)
         
@@ -404,8 +422,97 @@ def updateCSV(d, fileName, order=None, verbose=True):
         
     printDf = pd.DataFrame(sampleList, index=headerList, columns=['Sample Row'])
     
-    print(f'Appended {difference} rows to {fileName}. Random sample:\n')
+    print(f'Appended {difference} rows to {fileName}.\nRandom sample:\n')
     print(printDf)
-
     
+    # Option: Write summary to logfile
+    if logfile:
+        log(logfile, f'Appended {difference} rows to {fileName}.')
+
+# Appends a row (datetime + log message) to a logfile.
+def log(logfile, _str):
+    '''
+    Appends current date, time, and _str as row to logfile (i.e. logging.txt).
+    '''
+    # Get current time.
+    timestamp = datetime.now()
+    parsedTime = timestamp.strftime('%Y %b %d %H:%M')
+    
+    row = '\n' + parsedTime + '\t' + _str
+    
+    with open(logfile, 'a') as file:
+        file.write(row)
+
+# Helper function to scrape all metrics from a row out of the top 100 table on Coingecko.com
+def metricsFromRow(row, BTCprice, logfile=None):
+    '''
+    Gets a row from the live coin table of coingecko.com.
+    Returns dict {symbol: {metrics}} for this row / this coin.
+    '''
+    funcName = inspect.currentframe().f_code.co_name
+    row = list(row)
+    tokenDict = {}
+    
+    valDict = {}
+    
+    # Try to scrape metrics from row in table
+    try:
+        symbol = list(row[5])[1].get_text().split('\n')[-4]
+        valDict['rank'] = int(clean(row[3].get_text()))
+        valDict['priceUSD'] = clean(row[7].get_text())
+        valDict['priceBTC'] = priceUSD / BTCprice
+        valDict['percChange1h'] = clean(row[9].get_text())
+        valDict['percChange24h'] = clean(row[11].get_text())
+        valDict['percChange7d'] = clean(row[13].get_text())
+        valDict['vol24h'] = clean(row[15].get_text())
+        valDict['mcUSD'] = clean(row[17].get_text())
+        valDict['mcBTC'] = mcUSD / BTCprice
+        
+    # Possibility: Metric can't be scraped from website
+    except IndexError:
+        message = f"{funcName}(): Couldn't scrape all metrics for {symbol}. Maybe the website changed?"
+        print(message)
+        
+        # Option: Write to logfile
+        if logfile:
+            log(logfile, message)
+    
+    tokenDict[symbol] = valDict
+    print(tokenDict)
+    
+    return tokenDict
+
+# TODO: Saves a daily snapshot of all top 100 cryptos from coingecko and stores it in dailyTop100.csv
+# Metrics: symbol, rank, priceUSD, priceBTC, mcUSD, mcBTC, 24hPercentChange, 7dPercentChange, 24hVol
+def dailyTop100Snapshot(logfile=None):
+    '''
+    Visits Coingecko's main page and scrapes the table data (top 100 coins).
+    Returns a nested dict of shape {'symbol': {'metric1': val, 'metric2': val, ...}}
+    where the keys are the coin symbols, i.e. 'BTC', 'ETH'.
+    '''
+    top100Dict = {}
+    
+    # Scrape coingecko main page and parse to bs object
+    url = 'https://www.coingecko.com/en'
+    userAgent = 'Mozilla/5.0 (Windows NT 6.1) AppleWebKit/537.36 (KHTML, like Gecko)' + \
+        ' Chrome/41.0.2228.0 Safari/537.36'
+    req = urllib.request.Request(url, headers= {'User-Agent' : userAgent})
+    html = urllib.request.urlopen(req)
+    bs = BeautifulSoup(html.read(), 'html.parser')
+    
+    # Get all table rows from website except for header row
+    tableRows = bs.findAll('tr')[1:]
+    
+    # Get BTC price to calculate BTC-denominated metrics
+    BTCprice = clean(list(tableRows[0])[7].get_text())
+    
+    # For every row (= coin) in table: Get metrics and append to top100Dict
+    for row in tableRows:
+        tokenDict = metricsFromRow(row, BTCprice, logfile=logfile)
+        top100Dict.update(tokenDict)
+#    symbol = list(tokenDict)[0]
+#    top100Dict[symbol] = tokenDict[symbol]
+        
+    return top100Dict
+
 
